@@ -1,0 +1,10 @@
+{"type":"user","timestamp":"2026-01-01T10:00:00.000Z","uuid":"u1","message":{"role":"user","content":"Привет, проверь файл"}}
+{"type":"summary","timestamp":"2026-01-01T10:00:01.000Z","summary":"не транскрипт — пропускать"}
+{"type":"assistant","timestamp":"2026-01-01T10:00:02.000Z","uuid":"a1","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Пользователь просит проверить файл. Начну с чтения."}]}}
+{"type":"assistant","timestamp":"2026-01-01T10:00:03.000Z","uuid":"a2","message":{"role":"assistant","content":[{"type":"text","text":"**Смотрю** файл `demo.txt`."}]}}
+{"type":"assistant","timestamp":"2026-01-01T10:00:04.000Z","uuid":"a3","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"Read","input":{"file_path":"/tmp/demo/demo.txt","limit":10}}]}}
+{"type":"user","timestamp":"2026-01-01T10:00:05.000Z","uuid":"u2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","is_error":false,"content":"строка 1\nстрока 2"}]}}
+{"type":"assistant","timestamp":"2026-01-01T10:00:06.000Z","uuid":"a4","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_02","name":"Bash","input":{"command":"grep главная /tmp/demo/demo.txt"}}]}}
+{"type":"user","timestamp":"2026-01-01T10:00:07.000Z","uuid":"u3","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_02","is_error":true,"content":[{"type":"text","text":"grep: нет такого файла"}]}]}}
+{"type":"system","timestamp":"2026-01-01T10:00:08.000Z","content":"Контекст уплотнён"}
+{"не-json-строка"}

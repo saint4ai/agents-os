@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru" data-theme="dark" data-density="compact">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agents OS</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="bar"></header>
+  <aside id="side" aria-label="Проекты"></aside>
+  <main id="center">
+    <div id="viewbar"></div>
+    <div id="stage-wrap">
+      <div id="stage"></div>
+      <div id="zoombar" hidden></div>
+    </div>
+  </main>
+  <aside id="feed-panel" aria-label="Агент: отчёт и переписка">
+    <section id="pane-report" class="pane"></section>
+    <section id="pane-feed" class="pane"></section>
+  </aside>
+</div>
+<div id="menu" role="menu" hidden></div>
+<div id="scrim" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

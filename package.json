@@ -1,0 +1,28 @@
+{
+  "name": "agents-os",
+  "version": "0.1.0",
+  "description": "Agents OS: локальная карта агентов Claude Code, GLM, Codex и других моделей по всем проектам: кто работает, над чем и кто кого запустил",
+  "private": true,
+  "license": "MIT",
+  "bin": {
+    "agent-run": "tools/agent-run"
+  },
+  "scripts": {
+    "start": "node --max-old-space-size=384 server.js",
+    "test": "node --test test/*.test.js",
+    "demo": "node scripts/demo.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "server.js",
+    "lib",
+    "public",
+    "tools",
+    "scripts",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ]
+}

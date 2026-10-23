@@ -1,0 +1,23 @@
+#!/bin/bash
+# claude-glm — прежнее имя обёртки GLM (Z.ai). Всё делает agent-run: профиль glm встроен туда.
+# Старые команды работают как раньше:
+#   claude-glm --set-key            ключ Z.ai в Связку ключей (ввод скрыт)
+#   claude-glm --check              проверить ключ и связь с Z.ai
+#   claude-glm --name glm-worker    живая сессия-исполнитель (её найдёт босс)
+#   claude-glm -p "задача" ...      разовый запуск в фоне, ответ в stdout
+# Модель: по умолчанию её выбирает Z.ai. Свою задать так: GLM_MODEL=glm-4.5-air claude-glm ...
+
+set -euo pipefail
+
+if [[ -n "${GLM_MODEL:-}" && -z "${AGENT_RUN_MODEL:-}" ]]; then
+  export AGENT_RUN_MODEL="$GLM_MODEL"
+fi
+unset GLM_MODEL 2>/dev/null || true
+
+# agent-run ставится рядом с claude-glm: ~/.local/bin/claude-glm и ~/.local/bin/agent-run
+AR="agent-run"; command -v agent-run >/dev/null 2>&1 || AR="$(dirname "$0")/agent-run"
+# Служебные команды у agent-run идут перед профилем: claude-glm --check → agent-run --check glm
+case "${1:-}" in
+  --check|--set-key|--print-key|--init) exec "$AR" "$1" glm ;;
+esac
+exec "$AR" glm "$@"

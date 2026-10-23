@@ -1,0 +1,278 @@
+#!/bin/bash
+# agent-run — универсальная обёртка запуска исполнителей на API, совместимом с Anthropic.
+# Профиль берётся из ~/.agents-os/providers.json (путь переопределяет AGENTS_OS_HOME);
+# встроенные профили: claude, glm, codex.
+#
+#   agent-run <профиль> [флаги claude]   запуск (например: agent-run glm -p "задача" --output-format json)
+#   agent-run --init <профиль>           создать папку профиля: settings.json с apiKeyHelper и CLAUDE.md
+#   agent-run --set-key <профиль>        ключ в Связку ключей macOS или в ~/.agents-os/keys/<профиль> (600)
+#   agent-run --print-key <профиль>      ключ на stdout (его читает apiKeyHelper, в окружение он не попадает)
+#   agent-run --check <профиль>          проверить ключ и связь: в ответе «работаю»
+#   agent-run --list                     профили и есть ли ключ (сам ключ не печатается)
+#
+# Ключ в окружение не попадает: Claude Code берёт его сам через apiKeyHelper из settings.json профиля.
+# Модель выбирает провайдер; своя - AGENT_RUN_MODEL=модель agent-run <профиль> …
+
+set -euo pipefail
+
+AGENTS_OS_HOME="${AGENTS_OS_HOME:-$HOME/.agents-os}"
+
+usage() {
+  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+  exit 2
+}
+
+[[ $# -ge 1 ]] || usage
+
+# Профиль → JSON (id, kind, historyDir, baseUrl, keychainService, mcpKeyEnv). Встроенные glm/claude/codex
+# известны без файла, файл добавляет профили и переопределяет поля. Не claude-like - ошибка.
+profile_json() {
+  local id="$1"
+  AGENTS_OS_HOME="$AGENTS_OS_HOME" node -e '
+    const fs = require("fs");
+    const path = require("path");
+    const id = process.argv[2];
+    const home = process.env.AGENTS_OS_HOME;
+    const builtins = {
+      claude: { kind: "claude-like", historyDir: "~/.claude/projects", baseUrl: null, keychainService: "agents-os-claude", mcpKeyEnv: null },
+      glm: { kind: "claude-like", historyDir: "~/.glm-worker/projects", baseUrl: "https://api.z.ai/api/anthropic", keychainService: "claude-glm-zai", mcpKeyEnv: "ZAI_MCP_KEY" },
+      codex: { kind: "codex", historyDir: "~/.codex/sessions", baseUrl: null, keychainService: "agents-os-codex", mcpKeyEnv: null },
+    };
+    let p = builtins[id] ? Object.assign({ id }, builtins[id]) : { id, kind: "claude-like", historyDir: "~/." + id + "-worker/projects", baseUrl: null, keychainService: "agents-os-" + id, mcpKeyEnv: null };
+    const file = path.join(home, "providers.json");
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+      for (const raw of Array.isArray(parsed) ? parsed : parsed.profiles || []) {
+        if (raw && raw.id === id) p = Object.assign(p, raw);
+      }
+    } catch (e) {
+      if (e.code !== "ENOENT") { console.error("agent-run: не прочитан " + file + ": " + e.message); process.exit(4); }
+    }
+    if (p.kind !== "claude-like") { console.error("agent-run: профиль «" + id + "» не claude-like, обёртка его не запускает"); process.exit(3); }
+    const h = process.env.HOME;
+    let dir = String(p.historyDir || "").replace(/^~(?=\/|$)/, () => h).replace(/\/+$/, "");
+    dir = dir.replace(/\/projects$/, "") || path.join(h, "." + id + "-worker");
+    p.configDir = dir;
+    console.log(JSON.stringify(p));
+  ' "$0" "$id"
+}
+
+# Ключ профиля на stdout: Связка ключей macOS, иначе ~/.agents-os/keys/<id>. Нет - код 1, ничего не печатает.
+read_key() {
+  local id="$1" svc="$2" k f
+  if command -v security >/dev/null 2>&1; then
+    k="$(security find-generic-password -a "${USER:-$(id -un)}" -s "$svc" -w 2>/dev/null || true)"
+    if [[ -n "$k" ]]; then printf '%s' "$k"; return 0; fi
+  fi
+  f="$AGENTS_OS_HOME/keys/$id"
+  if [[ -f "$f" ]]; then cat "$f"; return 0; fi
+  return 1
+}
+
+cmd="${1:-}"; shift || true
+
+case "$cmd" in
+  --list)
+    AGENTS_OS_HOME="$AGENTS_OS_HOME" node -e '
+      const fs = require("fs"); const path = require("path");
+      const home = process.env.AGENTS_OS_HOME;
+      const ids = ["claude", "glm", "codex"];
+      try {
+        const parsed = JSON.parse(fs.readFileSync(path.join(home, "providers.json"), "utf8"));
+        for (const raw of Array.isArray(parsed) ? parsed : parsed.profiles || []) {
+          if (raw && raw.id && !ids.includes(raw.id)) ids.push(raw.id);
+        }
+      } catch {}
+      console.log(ids.join("\n"));
+    ' | while IFS= read -r id; do
+      p="$(profile_json "$id" 2>/dev/null || echo '')"
+      if [[ -z "$p" ]]; then echo "$id  (не claude-like, обёрткой не запускается)"; continue; fi
+      svc="$(printf '%s' "$p" | node -e 'let s="";process.stdin.on("data",(d)=>s+=d).on("end",()=>{const p=JSON.parse(s);console.log(p.keychainService||"agents-os-"+p.id)})')"
+      if read_key "$id" "$svc" >/dev/null 2>&1; then echo "$id  ключ: есть"; else echo "$id  ключ: нет"; fi
+    done
+    exit 0
+    ;;
+esac
+
+# Дальше первое слово - либо команда (--set-key …), либо профиль запуска.
+case "$cmd" in
+  --set-key|--print-key|--init|--check)
+    [[ $# -ge 1 ]] || usage
+    id="$1"; shift
+    ;;
+  -*|--*)
+    usage
+    ;;
+  *)
+    id="$cmd" # запуск: agent-run <профиль> [флаги claude]
+    ;;
+esac
+
+P="$(profile_json "$id")"
+jget() { printf '%s' "$P" | node -e 'let s="";process.stdin.on("data",(d)=>s+=d).on("end",()=>{const p=JSON.parse(s);const v=p[process.argv[2]];console.log(v==null?"":v)})' "$0" "$1"; }
+
+case "$cmd" in
+  --set-key)
+    svc="$(jget keychainService)"; svc="${svc:-agents-os-$id}"
+    if command -v security >/dev/null 2>&1; then
+      echo "Вставьте ключ профиля '$id' и нажмите Enter (ввод скрыт), затем повторите его."
+      security add-generic-password -U -a "${USER:-$(id -un)}" -s "$svc" -w
+    else
+      mkdir -p "$AGENTS_OS_HOME/keys"
+      read -rsp "Вставьте ключ профиля '$id' и нажмите Enter (ввод скрыт): " k; echo
+      (umask 077; printf '%s' "$k" > "$AGENTS_OS_HOME/keys/$id")
+    fi
+    echo "Ключ сохранён. Проверка: agent-run --check $id"
+    exit 0
+    ;;
+
+  --print-key)
+    svc="$(jget keychainService)"; svc="${svc:-agents-os-$id}"
+    if ! read_key "$id" "$svc"; then
+      echo "Ключа профиля '$id' нет. Сохраните его: agent-run --set-key $id" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+
+  --init)
+    cfg="$(jget configDir)"
+    mkdir -p "$cfg"
+    settings="$cfg/settings.json"
+    if [[ -e "$settings" ]]; then
+      echo "Существует: $settings - не трогаю."
+    else
+      cat > "$settings" <<'SETTINGS'
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run typecheck:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx eslint:*)",
+      "Bash(pnpm test:*)",
+      "Bash(pnpm run test:*)",
+      "Bash(pytest:*)",
+      "Bash(python -m pytest:*)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)",
+      "Bash(git rebase:*)",
+      "Bash(git merge:*)",
+      "Bash(rm -rf:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Bash(rsync:*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Bash(security:*)",
+      "Bash(env)",
+      "Bash(printenv:*)"
+    ]
+  },
+  "apiKeyHelper": "PLACEHOLDER"
+}
+SETTINGS
+      # apiKeyHelper подставляется отдельно: в нём имя профиля
+      AGENTS_OS_HOME="$AGENTS_OS_HOME" node -e '
+        const fs = require("fs");
+        const [file, id] = [process.argv[2], process.argv[3]];
+        const j = JSON.parse(fs.readFileSync(file, "utf8"));
+        // Абсолютный путь к самому agent-run: apiKeyHelper запускается без нашего PATH.
+        const self = fs.realpathSync(process.argv[1]);
+        j.apiKeyHelper = JSON.stringify(self) + " --print-key " + id;
+        fs.writeFileSync(file, JSON.stringify(j, null, 2) + "\n");
+      ' "$0" "$settings" "$id"
+      echo "Создан: $settings (ключ берёт agent-run --print-key $id)"
+    fi
+    claude_md="$cfg/CLAUDE.md"
+    if [[ -e "$claude_md" ]]; then
+      echo "Существует: $claude_md - не трогаю."
+    else
+      cat > "$claude_md" <<'CLAUDEMDC'
+# Ты исполнитель
+
+Задачи ставит главный агент (Claude Code). Он проверяет твою работу и сам решает, что принять.
+
+## Как работать
+
+- Делай ровно задачу из ТЗ. Меняй только файлы из списка «можно менять». Нужно тронуть другой файл — остановись и напиши об этом в отчёте.
+- Думай перед кодом. Минимум кода. Каждая изменённая строка объясняется задачей. Чужое не улучшай.
+- Не пиши «готово» без проверки: запусти команду проверки из ТЗ и посмотри на результат.
+- Не коммить, не пушь, не удаляй файлы, не выкатывай, не трогай `.env` и ключи. Это делает главный агент после проверки.
+- Непонятно или задача противоречит коду — не угадывай, напиши вопрос в отчёте.
+
+## Отчёт
+
+Последнее сообщение — строго в таком виде:
+
+```
+СТАТУС: готово | частично | не получилось
+ИЗМЕНЕНЫ ФАЙЛЫ: путь — что сделано (по строке на файл)
+ПРОВЕРКА: команда → результат (сколько прошло / упало)
+ВОПРОСЫ И РИСКИ: что осталось или «нет»
+```
+CLAUDEMDC
+      echo "Создан: $claude_md"
+    fi
+    echo "Дальше: agent-run --set-key $id && agent-run --check $id"
+    exit 0
+    ;;
+esac
+
+case "$cmd" in
+  --check)
+    set -- -p "Ответь одним словом: работаю" --output-format json
+    ;;
+  -*|--*)
+    usage
+    ;;
+esac
+
+# Запуск из сессии главного агента наследует его переменные (id сессии, адрес API, ключи MCP).
+# Исполнитель должен стартовать со своими, поэтому чужие сбрасываем.
+for var in $(compgen -e); do
+  case "$var" in CLAUDE*|ANTHROPIC*|ZAI_*) unset "$var" ;; esac
+done
+
+base_url="$(jget baseUrl)"
+if [[ -z "$base_url" ]]; then
+  echo "agent-run: у профиля '$id' нет baseUrl в providers.json - некуда ходить за ответами" >&2
+  exit 3
+fi
+
+export CLAUDE_CONFIG_DIR="$(jget configDir)"
+export ANTHROPIC_BASE_URL="$base_url"
+export API_TIMEOUT_MS=3000000
+if [[ -n "${AGENT_RUN_MODEL:-}" ]]; then
+  export ANTHROPIC_DEFAULT_OPUS_MODEL="$AGENT_RUN_MODEL"
+  export ANTHROPIC_DEFAULT_SONNET_MODEL="$AGENT_RUN_MODEL"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL="$AGENT_RUN_MODEL"
+fi
+
+# Ключ MCP-серверам нужен в окружении (Claude Code не подставляет ANTHROPIC_* в их заголовки),
+# но только когда исполнитель реально подключает MCP: без --mcp-config ключ не экспортируется.
+with_mcp=false
+for a in "$@"; do
+  case "$a" in --mcp-config|--mcp-config=*) with_mcp=true ;; esac
+done
+if $with_mcp; then
+  mcp_env="$(jget mcpKeyEnv)"
+  if [[ -n "$mcp_env" ]]; then
+    svc="$(jget keychainService)"; svc="${svc:-agents-os-$id}"
+    k="$(read_key "$id" "$svc")" || { echo "Ключа профиля «$id» нет. Сохраните его: agent-run --set-key $id" >&2; exit 1; }
+    export "$mcp_env=$k"
+  fi
+fi
+
+exec claude "$@"
