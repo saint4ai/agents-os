@@ -19,7 +19,7 @@ Agents OS читает переписки всех троих локально �
 ## 1. Agents OS
 
 ```bash
-git clone <адрес репозитория> agents-os
+git clone https://github.com/saint4ai/agents-os.git
 cd agents-os
 npm start
 ```
