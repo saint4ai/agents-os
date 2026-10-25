@@ -128,7 +128,21 @@ test('№2/№9: предупреждение при REDACT=0, одна стро
 
 /* ---------- №3: границы путей через realpath ---------- */
 
-test('№3: resolveWithin раскрывает симлинки: ссылка наружу корня - null, обычный файл - путь', () => {
+// Симлинки на Windows создаются только с режимом разработчика или правами администратора:
+// без них (EPERM) тест пропускается с причиной. Ссылку на папку (junction) Windows создаёт без прав,
+// ей покрыт тот же контроль realpath в тесте ниже.
+function symlinkOrSkip(t, target, link, type) {
+  try {
+    fs.symlinkSync(target, link, type);
+    return true;
+  } catch (e) {
+    if (e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
+    t.skip('нет прав на создание симлинков (Windows: режим разработчика или администратор): ' + e.code);
+    return false;
+  }
+}
+
+test('№3: resolveWithin раскрывает симлинки: ссылка наружу корня - null, обычный файл - путь', (t) => {
   const root = tmpDir('agent-console-realpath-');
   try {
     const inside = path.join(root, 'real.md');
@@ -136,7 +150,10 @@ test('№3: resolveWithin раскрывает симлинки: ссылка н
     const outside = path.join(outsideDir, 'secret.md');
     fs.writeFileSync(inside, 'ok');
     fs.writeFileSync(outside, 'секрет');
-    fs.symlinkSync(outside, path.join(root, 'link.md'));
+    if (!symlinkOrSkip(t, outside, path.join(root, 'link.md'))) {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+      return;
+    }
 
     assert.strictEqual(resolveWithin(root, path.join(root, 'real.md')), fs.realpathSync(inside));
     assert.strictEqual(resolveWithin(root, path.join(root, 'link.md')), null, 'симлинк наружу корня отклонён');
@@ -148,7 +165,36 @@ test('№3: resolveWithin раскрывает симлинки: ссылка н
   }
 });
 
-test('№3: resolveFileId отклоняет *.jsonl-симлинк на файл вне корня источника', () => {
+test('№3: resolveWithin и resolveFileId отклоняют ссылку на папку вне корня (junction на Windows, симлинк на POSIX)', () => {
+  const root = tmpDir('agent-console-junction-');
+  const outsideDir = tmpDir('agent-console-outside-');
+  try {
+    fs.writeFileSync(path.join(outsideDir, 'secret.md'), 'секрет');
+    fs.writeFileSync(path.join(outsideDir, 'creds.jsonl'), '{}\n');
+    fs.mkdirSync(path.join(root, 'proj'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'proj', 'ok.jsonl'), '{}\n');
+    fs.writeFileSync(path.join(root, 'proj', 'ok.md'), 'ok');
+    fs.symlinkSync(outsideDir, path.join(root, 'out'), 'junction');
+    fs.symlinkSync(outsideDir, path.join(root, 'proj', 'evil'), 'junction');
+
+    assert.strictEqual(resolveWithin(root, path.join(root, 'out', 'secret.md')), null, 'файл за ссылкой на папку наружу отклонён');
+    assert.ok(resolveWithin(root, path.join(root, 'proj', 'ok.md')), 'обычный файл разрешён');
+    const adapters = [{ id: 't', root }];
+    assert.strictEqual(resolveFileId(adapters, 't:proj/evil/creds.jsonl'), null, 'jsonl за ссылкой на папку наружу отклонён');
+    assert.ok(resolveFileId(adapters, 't:proj/ok.jsonl'), 'обычный jsonl разрешён');
+  } finally {
+    // ссылки снимаются отдельно, чтобы рекурсивное удаление не пошло по ним в чужую папку
+    for (const link of [path.join(root, 'out'), path.join(root, 'proj', 'evil')]) {
+      try {
+        fs.unlinkSync(link);
+      } catch {}
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+test('№3: resolveFileId отклоняет *.jsonl-симлинк на файл вне корня источника', (t) => {
   const root = tmpDir('agent-console-fileid-');
   try {
     const outsideDir = tmpDir('agent-console-outside-');
@@ -156,7 +202,10 @@ test('№3: resolveFileId отклоняет *.jsonl-симлинк на фай�
     fs.writeFileSync(outside, '{}\n');
     fs.mkdirSync(path.join(root, 'proj'), { recursive: true });
     fs.writeFileSync(path.join(root, 'proj', 'ok.jsonl'), '{}\n');
-    fs.symlinkSync(outside, path.join(root, 'proj', 'evil.jsonl'));
+    if (!symlinkOrSkip(t, outside, path.join(root, 'proj', 'evil.jsonl'))) {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+      return;
+    }
 
     const adapters = [{ id: 't', root }];
     assert.strictEqual(resolveFileId(adapters, 't:proj/evil.jsonl'), null, 'симлинк наружу - null');

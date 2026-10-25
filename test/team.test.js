@@ -224,7 +224,9 @@ test('npm run demo: сервер поднимается, три демо-про�
 /* ---------- упаковка ---------- */
 
 test('npm pack --dry-run не включает test/, .review/, samples-local/, .shots', () => {
-  const out = execFileSync('npm', ['pack', '--dry-run', '--json'], { cwd: ROOT, encoding: 'utf8' });
+  // На Windows npm это npm.cmd, а .cmd Node запускает только через shell (иначе EINVAL)
+  const win = process.platform === 'win32';
+  const out = execFileSync(win ? 'npm.cmd' : 'npm', ['pack', '--dry-run', '--json'], { cwd: ROOT, encoding: 'utf8', shell: win });
   const packs = JSON.parse(out);
   assert.ok(Array.isArray(packs) && packs.length === 1);
   const files = packs[0].files.map((f) => f.path);

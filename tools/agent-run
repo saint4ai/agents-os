@@ -5,20 +5,45 @@
 #
 #   agent-run <профиль> [флаги claude]   запуск (например: agent-run glm -p "задача" --output-format json)
 #   agent-run --init <профиль>           создать папку профиля: settings.json с apiKeyHelper и CLAUDE.md
-#   agent-run --set-key <профиль>        ключ в Связку ключей macOS или в ~/.agents-os/keys/<профиль> (600)
+#   agent-run --set-key <профиль>        ключ в Связку ключей macOS или в файл ~/.agents-os/keys/<профиль> (Linux: права 600;
+#                                        Windows: папка профиля пользователя, права наследуются от неё)
 #   agent-run --print-key <профиль>      ключ на stdout (его читает apiKeyHelper, в окружение он не попадает)
 #   agent-run --check <профиль>          проверить ключ и связь: в ответе «работаю»
 #   agent-run --list                     профили и есть ли ключ (сам ключ не печатается)
 #
 # Ключ в окружение не попадает: Claude Code берёт его сам через apiKeyHelper из settings.json профиля.
 # Модель выбирает провайдер; своя - AGENT_RUN_MODEL=модель agent-run <профиль> …
+# Windows: скрипт запускается в Git Bash (Git for Windows); на Windows нет Связки ключей, ключ лежит в файле.
 
 set -euo pipefail
 
 AGENTS_OS_HOME="${AGENTS_OS_HOME:-$HOME/.agents-os}"
 
+# Git Bash (Windows): node.exe понимает пути вида C:/Users/x, а не /c/Users/x. Вне Windows cygpath нет,
+# и пути остаются как есть.
+native() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m -- "$1"; else printf '%s' "$1"; fi
+}
+NATIVE_AOS="$(native "$AGENTS_OS_HOME")"
+NATIVE_HOME="$(native "$HOME")"
+
+# Имя пользователя для Связки ключей: USER, на Windows USERNAME, иначе id -un.
+account() {
+  printf '%s' "${USER:-${USERNAME:-$(id -un 2>/dev/null || echo user)}}"
+}
+
+# Windows: путь к bash.exe из Git for Windows (вид C:\Program Files\Git\bin\bash.exe) для apiKeyHelper.
+# Его запускает cmd, а в cmd слово «bash» может оказаться bash.exe из WSL (C:\Windows\System32). Вне Windows пусто.
+git_bash_win() {
+  command -v cygpath >/dev/null 2>&1 || return 0
+  local root exe
+  root="$(cygpath -w /)"
+  exe="${root%\\}\\bin\\bash.exe"
+  if [[ -f "$(cygpath -u "$exe")" ]]; then printf '%s' "$exe"; else cygpath -w "$BASH"; fi
+}
+
 usage() {
-  sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
 }
 
@@ -28,7 +53,7 @@ usage() {
 # известны без файла, файл добавляет профили и переопределяет поля. Не claude-like - ошибка.
 profile_json() {
   local id="$1"
-  AGENTS_OS_HOME="$AGENTS_OS_HOME" node -e '
+  AGENTS_OS_HOME="$NATIVE_AOS" HOME="$NATIVE_HOME" node -e '
     const fs = require("fs");
     const path = require("path");
     const id = process.argv[2];
@@ -50,9 +75,11 @@ profile_json() {
     }
     if (p.kind !== "claude-like") { console.error("agent-run: профиль «" + id + "» не claude-like, обёртка его не запускает"); process.exit(3); }
     const h = process.env.HOME;
-    let dir = String(p.historyDir || "").replace(/^~(?=\/|$)/, () => h).replace(/\/+$/, "");
-    dir = dir.replace(/\/projects$/, "") || path.join(h, "." + id + "-worker");
-    p.configDir = dir;
+    // слэши любые: на Windows historyDir может быть записан и как ~/.x/projects, и как C:\Users\x\.x\projects
+    let dir = String(p.historyDir || "").replace(/^~(?=[\\/]|$)/, () => h).replace(/[\\/]+$/, "");
+    dir = dir.replace(/[\\/]projects$/, "") || path.join(h, "." + id + "-worker");
+    // claude.exe и bash одинаково понимают C:/Users/x, поэтому на Windows путь отдаётся с прямыми слэшами
+    p.configDir = process.platform === "win32" ? dir.replace(/\\/g, "/") : dir;
     console.log(JSON.stringify(p));
   ' "$0" "$id"
 }
@@ -61,11 +88,12 @@ profile_json() {
 read_key() {
   local id="$1" svc="$2" k f
   if command -v security >/dev/null 2>&1; then
-    k="$(security find-generic-password -a "${USER:-$(id -un)}" -s "$svc" -w 2>/dev/null || true)"
+    k="$(security find-generic-password -a "$(account)" -s "$svc" -w 2>/dev/null || true)"
     if [[ -n "$k" ]]; then printf '%s' "$k"; return 0; fi
   fi
   f="$AGENTS_OS_HOME/keys/$id"
-  if [[ -f "$f" ]]; then cat "$f"; return 0; fi
+  # перевод строки и \r в конце файла не часть ключа (файл, созданный вручную в Блокноте или PowerShell)
+  if [[ -f "$f" ]]; then tr -d '\r\n' < "$f"; return 0; fi
   return 1
 }
 
@@ -73,7 +101,7 @@ cmd="${1:-}"; shift || true
 
 case "$cmd" in
   --list)
-    AGENTS_OS_HOME="$AGENTS_OS_HOME" node -e '
+    AGENTS_OS_HOME="$NATIVE_AOS" node -e '
       const fs = require("fs"); const path = require("path");
       const home = process.env.AGENTS_OS_HOME;
       const ids = ["claude", "glm", "codex"];
@@ -116,11 +144,17 @@ case "$cmd" in
     svc="$(jget keychainService)"; svc="${svc:-agents-os-$id}"
     if command -v security >/dev/null 2>&1; then
       echo "Вставьте ключ профиля '$id' и нажмите Enter (ввод скрыт), затем повторите его."
-      security add-generic-password -U -a "${USER:-$(id -un)}" -s "$svc" -w
+      security add-generic-password -U -a "$(account)" -s "$svc" -w
     else
       mkdir -p "$AGENTS_OS_HOME/keys"
       read -rsp "Вставьте ключ профиля '$id' и нажмите Enter (ввод скрыт): " k; echo
+      k="${k%$'\r'}" # вставка из Windows может принести \r
+      if [[ -z "$k" ]]; then echo "Ключ пустой, ничего не сохранено." >&2; exit 1; fi
       (umask 077; printf '%s' "$k" > "$AGENTS_OS_HOME/keys/$id")
+      # права 600: на Windows chmod ничего не меняет (доступ задаёт профиль пользователя), ошибкой это не считается
+      chmod 700 "$AGENTS_OS_HOME/keys" 2>/dev/null || true
+      chmod 600 "$AGENTS_OS_HOME/keys/$id" 2>/dev/null || true
+      echo "Ключ в файле: $AGENTS_OS_HOME/keys/$id"
     fi
     echo "Ключ сохранён. Проверка: agent-run --check $id"
     exit 0
@@ -184,13 +218,20 @@ case "$cmd" in
 }
 SETTINGS
       # apiKeyHelper подставляется отдельно: в нём имя профиля
-      AGENTS_OS_HOME="$AGENTS_OS_HOME" node -e '
+      AGENTS_OS_HOME="$NATIVE_AOS" AGENT_RUN_BASH="$(git_bash_win)" node -e '
         const fs = require("fs");
         const [file, id] = [process.argv[2], process.argv[3]];
         const j = JSON.parse(fs.readFileSync(file, "utf8"));
         // Абсолютный путь к самому agent-run: apiKeyHelper запускается без нашего PATH.
         const self = fs.realpathSync(process.argv[1]);
-        j.apiKeyHelper = JSON.stringify(self) + " --print-key " + id;
+        if (process.platform === "win32") {
+          // Claude Code на Windows запускает apiKeyHelper через cmd (на macOS и Linux через /bin/sh), а скрипт
+          // написан на bash: зовём Git Bash явно. Пути в кавычках, слэши в пути скрипта прямые.
+          const bash = process.env.AGENT_RUN_BASH || "bash";
+          j.apiKeyHelper = "\"" + bash + "\" \"" + self.replace(/\\/g, "/") + "\" --print-key " + id;
+        } else {
+          j.apiKeyHelper = JSON.stringify(self) + " --print-key " + id;
+        }
         fs.writeFileSync(file, JSON.stringify(j, null, 2) + "\n");
       ' "$0" "$settings" "$id"
       echo "Создан: $settings (ключ берёт agent-run --print-key $id)"

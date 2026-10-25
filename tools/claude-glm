@@ -1,7 +1,7 @@
 #!/bin/bash
 # claude-glm — прежнее имя обёртки GLM (Z.ai). Всё делает agent-run: профиль glm встроен туда.
 # Старые команды работают как раньше:
-#   claude-glm --set-key            ключ Z.ai в Связку ключей (ввод скрыт)
+#   claude-glm --set-key            ключ Z.ai в Связку ключей macOS или в файл ~/.agents-os/keys/glm (ввод скрыт)
 #   claude-glm --check              проверить ключ и связь с Z.ai
 #   claude-glm --name glm-worker    живая сессия-исполнитель (её найдёт босс)
 #   claude-glm -p "задача" ...      разовый запуск в фоне, ответ в stdout

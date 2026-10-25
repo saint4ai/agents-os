@@ -1,0 +1,4 @@
+# Скрипты запускает bash (на Windows это Git Bash). CRLF в них ломает shebang и `set -euo pipefail`,
+# а Git for Windows по умолчанию превращает LF в CRLF при клонировании (core.autocrlf=true).
+tools/** text eol=lf
+*.sh text eol=lf

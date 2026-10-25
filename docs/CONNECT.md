@@ -13,8 +13,10 @@ Agents OS читает переписки всех троих локально �
 кто работает, над чем, на какой модели и кто кого запустил.
 ```
 
-Займёт 15 минут. Нужны macOS или Linux, Node 18+ и установленный
-[Claude Code](https://docs.claude.com/en/docs/claude-code).
+Займёт 15 минут. Нужны macOS, Linux или Windows 10/11, Node 18+ и установленный
+[Claude Code](https://docs.claude.com/en/docs/claude-code). На Windows команды
+подключения другие, они собраны в разделе [Windows](#windows) ниже; шаги 1 и 2
+там такие же.
 
 ## 1. Agents OS
 
@@ -43,7 +45,7 @@ GLM работает как второй экземпляр Claude Code: тот 
 ```bash
 # из папки репозитория agents-os
 mkdir -p ~/.local/bin ~/.glm-worker
-cp tools/claude-glm ~/.local/bin/ && chmod +x ~/.local/bin/claude-glm
+cp tools/claude-glm tools/agent-run ~/.local/bin/ && chmod +x ~/.local/bin/claude-glm ~/.local/bin/agent-run
 cp tools/glm-worker/CLAUDE.md tools/glm-worker/settings.json tools/glm-worker/key-helper.sh ~/.glm-worker/
 chmod 700 ~/.glm-worker/key-helper.sh
 
@@ -269,6 +271,106 @@ cd ~/my-project && claude-glm -p "$(cat ~/.glm-worker/tasks/feature-x.md)" \
 3. В «Цепочке» главной сессии GLM висит под помощником.
 4. После конца в отчёте GLM есть блок «Кто поставил задачу».
 
+## Windows
+
+Карта Agents OS работает на Windows 10/11 в PowerShell. Исполнители (`claude-glm`,
+`agent-run`) это bash-скрипты, их запускают из Git Bash: Claude Code на Windows
+выполняет Bash-команды именно там.
+
+Нужно:
+
+1. Node 18+ (проверка: `node -v` в PowerShell).
+2. [Git for Windows](https://git-scm.com/downloads/win): в нём есть Git Bash. Сам
+   Claude Code по документации работает и без него (тогда команды идут через
+   PowerShell), но скрипты исполнителей написаны на bash, поэтому для них Git for
+   Windows нужен.
+3. Установленный Claude Code.
+
+### Карта (шаги 1 и 2)
+
+В PowerShell, как на других системах:
+
+```powershell
+git clone https://github.com/saint4ai/agents-os.git
+cd agents-os
+npm start
+```
+
+Откройте http://127.0.0.1:3939. Agents OS читает `%USERPROFILE%\.claude\projects`
+(`~` на Windows это `C:\Users\имя`). Демо: `npm run demo`.
+
+### GLM и другие исполнители
+
+Дальше команды выполняются в Git Bash (меню «Пуск», «Git Bash»), из папки
+`agents-os`. Там `~` тоже `C:\Users\имя`, а диск `C:` называется `/c`.
+
+```bash
+# скрипты в ~/.local/bin; chmod +x на Windows не нужен, Git Bash читает первую строку #!/bin/bash
+mkdir -p ~/.local/bin
+cp tools/agent-run tools/claude-glm ~/.local/bin/
+
+# строка PATH в ~/.bashrc
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+
+agent-run --init glm   # создаёт ~/.glm-worker: settings.json (права) и CLAUDE.md (правила исполнителя)
+claude-glm --set-key   # ключ Z.ai, ввод скрыт
+claude-glm --check     # в ответе должно быть «работаю» (это живой запрос к Z.ai)
+```
+
+Если в новом окне Git Bash `agent-run --list` отвечает «command not found», строка
+PATH не прочитана: добавьте её ещё и в `~/.bash_profile`.
+
+Что отличается от macOS и Linux:
+
+- **Ключ в файле, а не в Связке ключей.** Связки ключей на Windows нет, ключ лежит в
+  `C:\Users\имя\.agents-os\keys\<профиль>` (у GLM файл `glm`). Файл создаётся в
+  папке профиля пользователя и наследует её права: по умолчанию остальные
+  пользователи компьютера к ней не допущены. `chmod 600` на Windows ничего не
+  меняет, скрипт его выполняет без ошибки и идёт дальше. Ключ вставляется без
+  эха; перевод строки и `\r` в конце файла (файл, созданный в Блокноте)
+  отбрасываются.
+- **`apiKeyHelper` запускается через cmd.** По документации Claude Code
+  (docs.claude.com/en/docs/claude-code/settings) команда `apiKeyHelper`
+  выполняется в системной оболочке: `/bin/sh` на macOS и Linux и `cmd` на Windows.
+  Поэтому `agent-run --init` на Windows записывает в `settings.json` команду,
+  которая зовёт Git Bash по полному пути:
+  `"C:\Program Files\Git\bin\bash.exe" "C:/Users/имя/.local/bin/agent-run" --print-key glm`.
+  Просто `bash` в cmd может оказаться bash из WSL, поэтому путь полный.
+- **`tools/glm-worker/key-helper.sh` и `tools/glm-worker/settings.json` на
+  Windows не копируйте.** В `settings.json` оттуда стоит `~/.glm-worker/key-helper.sh`,
+  а cmd не раскрывает `~` и не запускает `.sh`. Вместо них работает `agent-run --init glm`.
+- **`cd` в команде запуска.** `cd /c/Проекты/x && claude-glm -p "…"` Agents OS читает
+  как запуск исполнителя в проекте `C:\Проекты\x`. Понимаются и `cd C:/Проекты/x`,
+  `cd "C:\Проекты\x"`, `cd ~/x`, относительный `cd`.
+- **Проект один.** `c:\Проекты` и `C:\Проекты` это одна папка, на карте она одна.
+
+Другие провайдеры (DeepSeek, Kimi, Qwen, MiniMax) подключаются так же, как в разделе
+выше: файл `%USERPROFILE%\.agents-os\providers.json`, затем в Git Bash
+`agent-run --init deepseek`, `agent-run --set-key deepseek`.
+
+### Codex на Windows
+
+Здесь только то, что сказано в официальной документации Codex
+(https://developers.openai.com/codex, раздел про Windows), без догадок:
+
+- Codex работает на Windows в приложении ChatGPT для Windows, в CLI и в расширении
+  для IDE. Приложение может работать нативно в PowerShell с песочницей Windows, без
+  WSL и виртуальной машины.
+- По умолчанию рекомендуется нативная песочница Windows. WSL выбирают, если нужны
+  инструменты Linux или процесс уже построен на WSL2.
+- Лучшая основа: Windows 11. Актуальная Windows 10 работает по принципу «best effort»;
+  практически нужна версия Windows 10 1809 или новее. Должен быть доступен `winget`.
+- Для WSL: в PowerShell `wsl --install`, затем внутри WSL установщик из
+  документации (`curl -fsSL https://chatgpt.com/codex/install.sh | sh`) и `codex`.
+  Репозитории документация советует держать в домашней папке Linux.
+
+Команду установки CLI для самой Windows (вне WSL) берите на странице Codex для
+Windows в документации: в прочитанных страницах её нет, и здесь она не придумана.
+Где именно Codex хранит сессии на Windows, документация тоже не говорит. Agents OS
+ищет их в `%USERPROFILE%\.codex\sessions`; если у вас иначе, укажите папку
+переменной `CODEX_SESSIONS_DIR`. На живых сессиях Codex под Windows Agents OS не
+проверялся.
+
 ## Ограничения
 
 - **Codex.** Связь «Claude запустил Codex» на карте не рисуется: распознаётся только
@@ -276,12 +378,14 @@ cd ~/my-project && claude-glm -p "$(cat ~/.glm-worker/tasks/feature-x.md)" \
   формату файлов Codex и на живых сессиях пока не проверялся.
 - **Правки через Bash** (`sed -i`, скрипты) не попадают в «Как выполнял», видны только
   Edit, Write и похожие инструменты.
-- **Запись экрана.** «Скрыть пути» в меню «⋯» прячет `/Users/имя`, но не названия
+- **Запись экрана.** «Скрыть пути» в меню «⋯» прячет `/Users/имя` и `C:\Users\имя`, но не названия
   проектов. Для записи держите на экране только проекты, которые можно показывать.
 
 ## Безопасность
 
-- Ключ Z.ai хранится в Связке ключей macOS (`claude-glm-zai`) или в
-  `~/.config/claude-glm/key` с правами 600. В файлы проекта и в переписку он не попадает.
+- Ключ Z.ai хранится в Связке ключей macOS (`claude-glm-zai`) или в файле
+  `~/.agents-os/keys/glm` (Linux: права 600; Windows: права папки профиля
+  пользователя). Прежний `~/.config/claude-glm/key` `key-helper.sh` читает как
+  запасной. В файлы проекта и в переписку ключ не попадает.
 - Agents OS слушает только `127.0.0.1`, ничего никуда не отправляет и маскирует
   секреты в переписке до показа в браузере.

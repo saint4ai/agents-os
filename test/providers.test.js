@@ -10,6 +10,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { user, assistant, toolResult, toolUse, text, writeJsonl, tmpDir } = require('./helpers/synth');
+const { findBash } = require('./helpers/bash');
 const { loadProfiles, builtinProfiles, envDirName } = require('../lib/providers');
 const { loadAdapters } = require('../lib/sources');
 const { parseAgentLaunches } = require('../lib/shell');
@@ -72,7 +73,7 @@ test('файл добавляет deepseek и переопределяет label
   assert.strictEqual(deepseek.executor, true);
   const glm = profiles.find((p) => p.id === 'glm');
   assert.strictEqual(glm.label, 'GLM (Z.ai)', 'файл переопределяет поле встроенного');
-  assert.strictEqual(glm.historyDir, '/work/glm-hist');
+  assert.strictEqual(glm.historyDir, path.resolve('/work/glm-hist'), 'путь из окружения приводится к абсолютному (на Windows получает диск)');
   assert.strictEqual(glm.baseUrl, 'https://api.z.ai/api/anthropic', 'остальные поля встроенного остаются');
 });
 
@@ -229,8 +230,9 @@ test('MCP-запуск без сессии: связь с пометкой missi
 
 /* ---------- обёртка agent-run ---------- */
 
+// На Windows скрипт идёт через Git Bash: слово bash в PATH может оказаться bash из WSL
 function runAgentRun(args, env) {
-  return execFileSync('bash', [path.join(ROOT, 'tools', 'agent-run'), ...args], {
+  return execFileSync(findBash() || 'bash', [path.join(ROOT, 'tools', 'agent-run'), ...args], {
     env: Object.assign({}, process.env, env),
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -284,7 +286,15 @@ test('agent-run: --init создаёт settings.json с apiKeyHelper и CLAUDE.m
     const cfg = path.join(home, '.kimi-worker');
     const settings = JSON.parse(fs.readFileSync(path.join(cfg, 'settings.json'), 'utf8'));
     // Абсолютный путь к agent-run: apiKeyHelper запускается без PATH пользователя.
-    assert.strictEqual(settings.apiKeyHelper, `${JSON.stringify(fs.realpathSync(path.join(ROOT, "tools", "agent-run")))} --print-key ${id}`, 'ключ берёт apiKeyHelper, в окружение он не попадает');
+    if (process.platform === 'win32') {
+      // Claude Code запускает apiKeyHelper через cmd, а agent-run это bash-скрипт: Git Bash зовётся по полному пути,
+      // путь скрипта с прямыми слэшами, оба в кавычках (запуск этой команды через cmd проверяет tools.test.js)
+      const self = fs.realpathSync(path.join(ROOT, 'tools', 'agent-run')).replace(/\\/g, '/');
+      assert.match(settings.apiKeyHelper, /^"[A-Za-z]:\\[^"]*\\bash\.exe" "/);
+      assert.ok(settings.apiKeyHelper.endsWith(`" "${self}" --print-key ${id}`), settings.apiKeyHelper);
+    } else {
+      assert.strictEqual(settings.apiKeyHelper, `${JSON.stringify(fs.realpathSync(path.join(ROOT, "tools", "agent-run")))} --print-key ${id}`, 'ключ берёт apiKeyHelper, в окружение он не попадает');
+    }
     assert.ok(settings.permissions.deny.some((x) => /git push/.test(String(x))), 'права как у glm-worker: push и опасное запрещены');
     assert.ok(fs.readFileSync(path.join(cfg, 'CLAUDE.md'), 'utf8').includes('# Ты исполнитель'));
     assert.match(out, /agent-run --set-key kimi/);

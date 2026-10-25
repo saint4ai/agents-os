@@ -218,12 +218,13 @@ export function displayTitle(t) {
   return s ? s[0].toUpperCase() + s.slice(1) : String(t || '');
 }
 
-// Пути /Users/имя/… и /home/имя/… заменяются на ~/…, пока включён переключатель «Скрыть пути» (для записи экрана).
+// Пути /Users/имя/…, /home/имя/…, C:\Users\имя\… и \\wsl.localhost\дистрибутив\home\имя\… заменяются на ~…,
+// пока включён переключатель «Скрыть пути» (для записи экрана).
 let hidePaths = false;
 export function setHidePaths(v) { hidePaths = !!v; }
 export function pathText(p) {
   const s = String(p == null ? '' : p);
-  return hidePaths ? s.replace(/^\/(?:Users|home)\/[^/]+/, '~') : s;
+  return hidePaths ? s.replace(/^\/(?:Users|home)\/[^/]+/, '~').replace(/^[A-Za-z]:[\\/]Users[\\/][^\\/]+/i, '~').replace(/^\\\\wsl(?:\.localhost|\$)\\[^\\]+\\home\\[^\\]+/i, '~') : s;
 }
 
 // Главная сессия живёт днями: длительность «6 д 1 ч» ничего не говорит, поэтому у неё «последний ответ».
